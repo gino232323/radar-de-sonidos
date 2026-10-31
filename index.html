@@ -1,0 +1,751 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Radar de Sonidos</title>
+<style>
+/* Distribución: estado y cifras arriba, espectrograma ancho al centro, tres paneles debajo (dónde, qué suena, qué se dice). */
+:root{
+  --bg:#0e1620; --panel:#15212d; --panel-2:#1c2a39; --line:#27384a;
+  --fg:#e3ebf2; --muted:#93a5b6; --accent:#f2b544; --accent-ink:#1a1305;
+  --cool:#59b7d6; --voice:#8fd0a8; --warn:#ef7d5f;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{background:var(--bg)}
+body{
+  margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 var(--sans);
+  padding-block:22px 48px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+}
+.wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+.top{display:flex;flex-wrap:wrap;gap:16px 32px;justify-content:space-between;align-items:flex-end}
+.brand{min-width:0;flex:1 1 340px}
+h1{margin:0 0 6px;font-size:clamp(1.7rem,4.5vw,2.5rem);line-height:1.05;letter-spacing:-.03em;font-weight:800;text-wrap:balance}
+.brand p{margin:0;color:var(--muted);max-width:62ch}
+.controls{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
+.ctl{display:flex;flex-direction:column;gap:5px;font-size:.7rem;color:var(--muted);letter-spacing:.07em;text-transform:uppercase}
+select{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:9px 10px;font:inherit;font-size:.9rem;letter-spacing:0;text-transform:none}
+input[type=range]{width:140px;accent-color:var(--accent);margin:8px 0}
+button{font:inherit;font-size:.9rem;cursor:pointer;border-radius:10px;border:1px solid var(--line);background:var(--panel-2);color:var(--fg);padding:8px 14px}
+button:hover{border-color:var(--muted)}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:transparent;font-weight:700;padding:11px 20px}
+button.primary.on{background:transparent;color:var(--fg);border-color:var(--warn)}
+button.primary.on::before{content:"";display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--warn);margin-right:9px;animation:pulse 1.4s ease-in-out infinite}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@keyframes pulse{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){button.primary.on::before{animation:none}}
+
+.msg{margin:0;padding:12px 14px;border-radius:10px;background:#3a2620;border:1px solid #6b3c30;color:#ffd9cf}
+.msg.info{background:#16293a;border-color:#2c4a63;color:#cfe6f5}
+
+.status{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:16px;align-items:center}
+@media (max-width:760px){.status{grid-template-columns:1fr}}
+.verdict{display:flex;gap:14px;align-items:center;min-width:0}
+.verdict .dot{flex:none;width:16px;height:16px;border-radius:50%;background:var(--muted);box-shadow:0 0 0 5px rgba(147,165,182,.15);transition:background .3s,box-shadow .3s}
+.verdict[data-state=voice] .dot{background:var(--voice);box-shadow:0 0 0 5px rgba(143,208,168,.18)}
+.verdict[data-state=music] .dot{background:var(--cool);box-shadow:0 0 0 5px rgba(89,183,214,.2)}
+.verdict[data-state=orchestra] .dot{background:var(--accent);box-shadow:0 0 0 7px rgba(242,181,68,.25)}
+.verdict strong{display:block;font-size:clamp(1.3rem,3.4vw,1.9rem);line-height:1.15;letter-spacing:-.02em;text-wrap:balance}
+.verdict small{display:block;color:var(--muted);margin-top:2px;min-height:1.4em}
+.stats{margin:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+@media (max-width:520px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.stats div{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px;min-width:0}
+.stats dt{font-size:.65rem;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.stats dd{margin:2px 0 0;font:600 1rem var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.scope{position:relative;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#0b1320}
+#spec{display:block;width:100%;height:clamp(210px,32vw,330px)}
+.ticks{position:absolute;inset:0;pointer-events:none}
+.ticks span{position:absolute;left:0;right:0;border-top:1px dashed rgba(255,255,255,.1)}
+.ticks em{position:absolute;left:8px;top:-1.35em;font:normal .66rem var(--mono);color:rgba(227,235,242,.62)}
+.now{position:absolute;right:10px;top:8px;font:.66rem var(--mono);color:rgba(227,235,242,.6);letter-spacing:.06em;text-transform:uppercase}
+.idle{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:20px;color:var(--muted);background:rgba(11,19,32,.72)}
+.idle[hidden]{display:none}
+.idle p{margin:0;max-width:38ch}
+
+.panels{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));gap:16px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0;display:flex;flex-direction:column;gap:12px}
+h2{margin:0;font-size:.72rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.hint{margin:0;color:var(--muted);font-size:.84rem}
+.big{margin:0;font-size:1.15rem;font-weight:700;letter-spacing:-.01em}
+canvas.fit{display:block;width:100%}
+#radar{aspect-ratio:16/10}
+#trend{height:70px;border-radius:8px;background:var(--panel-2)}
+
+.bars{display:flex;flex-direction:column;gap:9px}
+.bar{display:grid;grid-template-columns:84px minmax(0,1fr) 40px;gap:10px;align-items:center;font-size:.86rem}
+.bar i{height:9px;border-radius:5px;background:var(--panel-2);position:relative;overflow:hidden}
+.bar i::after{content:"";position:absolute;inset:0;width:calc(var(--v,0)*100%);background:var(--c,var(--cool));border-radius:inherit;transition:width .25s}
+.bar b{font:600 .8rem var(--mono);text-align:right;font-variant-numeric:tabular-nums}
+.chroma{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:4px;height:84px;align-items:end}
+.chroma .cell{display:flex;flex-direction:column;justify-content:flex-end;height:100%;gap:4px;align-items:stretch;min-width:0}
+.chroma .b{display:block;height:calc(var(--v,0)*60px);min-height:2px;background:var(--cool);border-radius:3px 3px 0 0;transition:height .2s}
+.chroma .cell.top .b{background:var(--accent)}
+.chroma small{font:.6rem var(--mono);color:var(--muted);text-align:center;white-space:nowrap}
+.keyline{margin:0;font-size:.92rem}
+.keyline b{color:var(--accent)}
+
+.tools{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+.tools label{display:flex;gap:8px;align-items:center;font-size:.88rem}
+.tools input{accent-color:var(--accent);width:16px;height:16px}
+.tools .spacer{flex:1}
+#interim{margin:0;min-height:1.5em;color:var(--voice);font-style:italic;border-left:2px dashed var(--line);padding-left:10px}
+#feed{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px;max-height:340px;overflow-y:auto}
+#feed li{border-left:2px solid var(--line);padding:2px 0 2px 10px}
+#feed time{font:.68rem var(--mono);color:var(--muted)}
+#feed p{margin:1px 0 2px;font-size:1rem;overflow-wrap:anywhere}
+#feed .meta{font:.68rem var(--mono);color:var(--muted)}
+#feed .w{opacity:calc(.4 + var(--c,1)*.6)}
+.empty{color:var(--muted);font-size:.88rem}
+.foot{margin:4px 0 0;color:var(--muted);font-size:.8rem;max-width:90ch}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <h1>Radar de Sonidos</h1>
+      <p>Escucha el ambiente, ubica de dónde viene el sonido, anota las palabras que se asoman entre el ruido y avisa cuando suena música sinfónica.</p>
+    </div>
+    <div class="controls">
+      <label class="ctl" for="lang">Idioma
+        <select id="lang">
+          <option value="es-MX">Español (México)</option>
+          <option value="es-ES">Español (España)</option>
+          <option value="en-US">English (US)</option>
+        </select>
+      </label>
+      <label class="ctl" for="gain">Contraste
+        <input id="gain" type="range" min="-20" max="25" value="0">
+      </label>
+      <button id="toggle" class="primary" type="button">Empezar a escuchar</button>
+    </div>
+  </header>
+
+  <p id="msg" class="msg" role="status" hidden></p>
+
+  <section class="status">
+    <div class="verdict" id="verdict" data-state="idle">
+      <span class="dot"></span>
+      <div>
+        <strong id="vLabel">En espera</strong>
+        <small id="vSub">Pulsa el botón para activar el micrófono.</small>
+      </div>
+    </div>
+    <dl class="stats">
+      <div><dt>Nivel</dt><dd id="sLevel">— dB</dd></div>
+      <div><dt>Ruido de fondo</dt><dd id="sFloor">— dB</dd></div>
+      <div><dt>Sobre el ruido</dt><dd id="sSnr">— dB</dd></div>
+      <div><dt>Tono dominante</dt><dd id="sNote">—</dd></div>
+    </dl>
+  </section>
+
+  <section class="scope" aria-label="Espectrograma en vivo">
+    <canvas id="spec"></canvas>
+    <div class="ticks" id="ticks" aria-hidden="true"></div>
+    <span class="now">ahora →</span>
+    <div class="idle" id="idle"><p>Aquí aparecerá el espectrograma. Lo que se ve como textura oscura es el ruido de fondo; las líneas brillantes son tonos, voces o instrumentos.</p></div>
+  </section>
+
+  <div class="panels">
+    <section class="panel">
+      <h2>Dónde suena</h2>
+      <canvas id="radar" class="fit"></canvas>
+      <p class="big" id="locText">Sin señal</p>
+      <p class="hint" id="locNote">La dirección necesita un micrófono estéreo.</p>
+      <canvas id="trend" class="fit" aria-label="Nivel de los últimos 20 segundos"></canvas>
+    </section>
+
+    <section class="panel">
+      <h2>Qué suena</h2>
+      <div class="bars" id="bars"></div>
+      <div class="chroma" id="chroma" aria-label="Notas presentes"></div>
+      <p class="keyline" id="keyline">Tonalidad probable: —</p>
+      <p class="hint">La detección de música usa señales como tonos estables, armónicos, número de instrumentos y tonalidad. Es una estimación, no una certeza.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Qué se oye decir</h2>
+      <div class="tools">
+        <label for="tx"><input id="tx" type="checkbox" checked> Transcribir</label>
+        <span class="spacer"></span>
+        <button id="copy" type="button">Copiar</button>
+        <button id="clear" type="button">Limpiar</button>
+      </div>
+      <p id="interim" aria-live="polite"></p>
+      <ol id="feed"><li class="empty">Las palabras aparecerán aquí, con su hora y qué tanto sobresalían del ruido. Las menos seguras se ven más tenues.</li></ol>
+    </section>
+  </div>
+
+  <p class="foot">Abre este archivo directamente en Chrome o Edge (en Safari la transcripción puede variar). La transcripción usa el servicio de voz del navegador, así que necesita internet. El audio del micrófono se analiza solo en tu dispositivo.</p>
+</div>
+
+<script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+const clamp01 = x => x < 0 ? 0 : x > 1 ? 1 : x;
+const NOTES = ['Do','Do♯','Re','Re♯','Mi','Fa','Fa♯','Sol','Sol♯','La','La♯','Si'];
+
+/*<features>*/
+const MAJ = [6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
+const MIN = [6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
+
+function spectrumFeatures(db, fs, fft){
+  const n = db.length, binHz = fs / fft;
+  const lo = Math.max(2, Math.floor(80 / binHz));
+  const hi = Math.min(n - 3, Math.ceil(6000 / binHz));
+  const cnt = hi - lo + 1;
+  const band = new Float32Array(cnt);
+  let sum = 0, sumLog = 0;
+  for (let i = lo; i <= hi; i++) {
+    const d = Math.max(db[i], -140);
+    band[i - lo] = d;
+    const p = Math.pow(10, d / 10);
+    sum += p; sumLog += Math.log(p + 1e-20);
+  }
+  const flat = Math.exp(sumLog / cnt) / (sum / cnt + 1e-20);
+  const med = Float32Array.from(band).sort()[cnt >> 1];
+  const thr = med + 15;
+  let peaks = 0, pLow = 0, pMid = 0, pHigh = 0, chromaPeaks = 0, bestI = -1, bestDb = -200;
+  const chroma = new Float32Array(12);
+  for (let i = lo; i <= hi; i++) {
+    const d = db[i];
+    if (d < thr) continue;
+    if (d >= db[i-1] && d > db[i+1] && d >= db[i-2] && d > db[i+2]) {
+      peaks++;
+      const f = i * binHz;
+      if (f < 250) pLow++; else if (f < 2000) pMid++; else pHigh++;
+      if (f >= 65 && f <= 2100) {
+        const midi = 69 + 12 * Math.log2(f / 440);
+        chroma[((Math.round(midi) % 12) + 12) % 12] += d - med;
+        chromaPeaks++;
+      }
+      if (d > bestDb) { bestDb = d; bestI = i; }
+    }
+  }
+  let peakFreq = 0;
+  if (bestI > 0) {
+    const a = db[bestI-1], b = db[bestI], c = db[bestI+1], den = a - 2*b + c;
+    peakFreq = (bestI + (den !== 0 ? 0.5 * (a - c) / den : 0)) * binHz;
+  }
+  const tonal = clamp01((-Math.log10(flat) - 0.15) / 1.2);
+  return { flat, tonal, med, peaks, pLow, pMid, pHigh, chroma, chromaPeaks, peakFreq, peakDb: bestDb };
+}
+
+function corr(a, b){
+  let ma = 0, mb = 0;
+  for (let i = 0; i < 12; i++) { ma += a[i]; mb += b[i]; }
+  ma /= 12; mb /= 12;
+  let nn = 0, da = 0, dbb = 0;
+  for (let i = 0; i < 12; i++) { const x = a[i]-ma, y = b[i]-mb; nn += x*y; da += x*x; dbb += y*y; }
+  return nn / Math.sqrt(da * dbb + 1e-12);
+}
+function bestKey(ch){
+  let best = { r: -2, pc: 0, minor: false };
+  const rot = new Array(12);
+  for (let k = 0; k < 12; k++) {
+    for (let i = 0; i < 12; i++) rot[i] = ch[(i + k) % 12];
+    const rM = corr(rot, MAJ), rm = corr(rot, MIN);
+    if (rM > best.r) best = { r: rM, pc: k, minor: false };
+    if (rm > best.r) best = { r: rm, pc: k, minor: true };
+  }
+  return best;
+}
+function chromaClarity(ch, nPeaks){
+  let s = 0;
+  for (let i = 0; i < 12; i++) s += ch[i];
+  if (s <= 0) return 0;
+  let H = 0;
+  for (let i = 0; i < 12; i++) { const p = ch[i] / s; if (p > 0) H -= p * Math.log(p); }
+  return clamp01((1 - H / Math.log(12) - 0.05) / 0.3) * clamp01(nPeaks / 6);
+}
+function speechModulation(env){
+  const N = env.length;
+  let m = 0;
+  for (let i = 0; i < N; i++) m += env[i];
+  m /= N;
+  let varT = 0;
+  for (let i = 0; i < N; i++) varT += (env[i]-m) * (env[i]-m);
+  const std = Math.sqrt(varT / N);
+  if (std < 0.5) return 0;
+  let band = 0;
+  for (let k = 6; k <= 12; k++) {
+    let re = 0, im = 0;
+    for (let n = 0; n < N; n++) {
+      const a = 2 * Math.PI * k * n / N, v = env[n] - m;
+      re += v * Math.cos(a); im -= v * Math.sin(a);
+    }
+    band += 2 * (re*re + im*im) / N;
+  }
+  return clamp01(band / (varT + 1e-9) / 0.35) * clamp01((std - 2) / 6);
+}
+function musicScores(f, clarity, keyFit, speechMod, voiceHint, lvl){
+  const poly = clamp01((f.peaks - 6) / 24);
+  const gate = clamp01((lvl + 82) / 14);
+  let music = gate * (0.34*f.tonal + 0.22*keyFit + 0.20*clarity + 0.24*poly);
+  music *= (1 - 0.7*speechMod) * (1 - 0.5*voiceHint);
+  const breadth = (f.pLow >= 1 ? 0.3 : 0) + 0.4*clamp01(f.pMid / 8) + 0.3*clamp01(f.pHigh / 4);
+  const orch = music * clamp01((f.peaks - 16) / 16) * breadth;
+  return { music, orch: Math.min(1, orch), poly, breadth };
+}
+/*</features>*/
+
+/* ---------- estado ---------- */
+const FFT = 4096, ENV_N = 40, TICK_MS = 50, SPEED = 55;
+let ctx = null, stream = null, analyser = null, anL = null, anR = null, rafId = 0;
+let fs = 48000, running = false, freqDb = null, timeBuf = null, tL = null, tR = null;
+let baseDb = -100, lvlS = null, lastTick = 0, lastFrame = 0, acc = 0, tickN = 0, trackCh = 1;
+let stereoScore = 0, pos = 0, posSeen = 0, lagNorm = 19;
+const hist = [], floorHist = [], env = [];
+let floorDb = -90;
+let chromaS = new Float32Array(12);
+const S = { noise: 0, voice: 0, music: 0, orch: 0 };
+let state = 'idle', pend = '', pendN = 0;
+let speechMod = 0, lastSpeechEvt = 0, lastNote = '—', keyInfo = null;
+let gainDb = 0;
+let rows0 = null, rows1 = null;
+
+const specC = $('spec'), specG = specC.getContext('2d', { willReadFrequently: false });
+const radarC = $('radar'), radarG = radarC.getContext('2d');
+const trendC = $('trend'), trendG = trendC.getContext('2d');
+const css = getComputedStyle(document.documentElement);
+const col = n => css.getPropertyValue(n).trim();
+
+/* ---------- colores del espectrograma ---------- */
+const LUT = new Uint8ClampedArray(256 * 3);
+(() => {
+  const st = [[0,11,19,32],[.2,23,48,79],[.4,75,58,143],[.6,181,73,122],[.8,242,153,74],[1,255,244,214]];
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255;
+    let a = st[0], b = st[st.length-1];
+    for (let k = 0; k < st.length - 1; k++) if (t >= st[k][0] && t <= st[k+1][0]) { a = st[k]; b = st[k+1]; break; }
+    const u = (t - a[0]) / ((b[0] - a[0]) || 1);
+    for (let c = 0; c < 3; c++) LUT[i*3 + c] = a[c+1] + (b[c+1] - a[c+1]) * u;
+  }
+})();
+
+/* ---------- utilidades de interfaz ---------- */
+function showMsg(text, info){
+  const m = $('msg');
+  m.textContent = text; m.hidden = !text;
+  m.className = 'msg' + (info ? ' info' : '');
+}
+function noteName(f){
+  const midi = 69 + 12 * Math.log2(f / 440), r = Math.round(midi);
+  const cents = Math.round((midi - r) * 100);
+  return NOTES[((r % 12) + 12) % 12] + (Math.floor(r / 12) - 1) + (cents ? ' ' + (cents > 0 ? '+' : '') + cents + '¢' : '');
+}
+function fitCanvas(c, h){
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(10, Math.round(c.clientWidth * dpr));
+  const hh = Math.max(10, Math.round((h || c.clientHeight) * dpr));
+  if (c.width !== w || c.height !== hh) { c.width = w; c.height = hh; return true; }
+  return false;
+}
+
+/* Barras y notas */
+const BARS = [
+  ['noise','Ruido','--muted'], ['voice','Voz','--voice'],
+  ['music','Música','--cool'], ['orch','Sinfonía','--accent']
+];
+$('bars').innerHTML = BARS.map(([k, n, c]) =>
+  `<div class="bar" id="bar-${k}" style="--c:var(${c})"><span>${n}</span><i></i><b>0%</b></div>`).join('');
+$('chroma').innerHTML = NOTES.map((n, i) => `<div class="cell" id="ch${i}"><span class="b"></span><small>${n}</small></div>`).join('');
+
+/* ---------- espectrograma ---------- */
+function buildRows(){
+  const H = specC.height, n = FFT / 2, binHz = fs / FFT;
+  const fmin = 60, fmax = Math.min(12000, fs / 2 * 0.98);
+  rows0 = new Int32Array(H); rows1 = new Int32Array(H);
+  for (let y = 0; y < H; y++) {
+    const f0 = fmin * Math.pow(fmax / fmin, (H - 1 - y) / H);
+    const f1 = fmin * Math.pow(fmax / fmin, (H - y) / H);
+    const b0 = Math.max(1, Math.floor(f0 / binHz));
+    rows0[y] = b0; rows1[y] = Math.min(n - 1, Math.max(b0, Math.ceil(f1 / binHz)));
+  }
+}
+function buildTicks(){
+  const fmin = 60, fmax = Math.min(12000, fs / 2 * 0.98);
+  const list = [[100,'100 Hz'],[200,'200'],[500,'500'],[1000,'1 kHz'],[2000,'2 kHz'],[5000,'5 kHz'],[10000,'10 kHz']];
+  $('ticks').innerHTML = list.filter(([f]) => f < fmax).map(([f, t]) =>
+    `<span style="top:${(100 * (1 - Math.log(f / fmin) / Math.log(fmax / fmin))).toFixed(2)}%"><em>${t}</em></span>`).join('');
+}
+function resizeSpec(){
+  if (fitCanvas(specC)) {
+    specG.fillStyle = `rgb(${LUT[0]},${LUT[1]},${LUT[2]})`;
+    specG.fillRect(0, 0, specC.width, specC.height);
+    buildRows();
+  }
+}
+function drawColumn(dx){
+  const W = specC.width, H = specC.height;
+  specG.drawImage(specC, -dx, 0);
+  const img = specG.createImageData(dx, H), d = img.data;
+  for (let y = 0; y < H; y++) {
+    let m = -200;
+    for (let b = rows0[y]; b <= rows1[y]; b++) if (freqDb[b] > m) m = freqDb[b];
+    const v = (m - baseDb + 14 + gainDb) / 70;
+    const ci = (v <= 0 ? 0 : v >= 1 ? 255 : (v * 255) | 0) * 3;
+    const r = LUT[ci], g = LUT[ci+1], bl = LUT[ci+2];
+    for (let x = 0; x < dx; x++) {
+      const o = (y * dx + x) * 4;
+      d[o] = r; d[o+1] = g; d[o+2] = bl; d[o+3] = 255;
+    }
+  }
+  specG.putImageData(img, W - dx, 0);
+}
+
+/* ---------- radar y tendencia ---------- */
+function drawRadar(){
+  fitCanvas(radarC, radarC.clientWidth * 0.625);
+  const dpr = window.devicePixelRatio || 1, g = radarG;
+  const W = radarC.width, H = radarC.height;
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, W, H);
+  const cx = W / 2, cy = H * 0.94, R = Math.min(W * 0.47, H * 0.88);
+  g.lineWidth = dpr;
+  g.strokeStyle = col('--line'); g.fillStyle = col('--muted');
+  g.font = `${10 * dpr}px ${col('--mono')}`;
+  for (let k = 1; k <= 4; k++) { g.beginPath(); g.arc(cx, cy, R * k / 4, Math.PI, 2 * Math.PI); g.stroke(); }
+  for (let a = -75; a <= 75; a += 25) {
+    const t = a * Math.PI / 180;
+    g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + R * Math.sin(t), cy - R * Math.cos(t)); g.stroke();
+  }
+  g.textAlign = 'left'; g.fillText('IZQ', 6 * dpr, cy - 4 * dpr);
+  g.textAlign = 'right'; g.fillText('DER', W - 6 * dpr, cy - 4 * dpr);
+  g.textAlign = 'center'; g.fillText('FRENTE', cx, cy - R - 4 * dpr);
+  if (!running) return;
+  const snr = lvlS === null ? 0 : lvlS - floorDb;
+  const strength = clamp01(snr / 40);
+  if (stereoScore > 0.5) {
+    if (snr > 6) {
+      const th = pos * 75 * Math.PI / 180, r = R * (1 - 0.8 * strength);
+      const x = cx + r * Math.sin(th), y = cy - r * Math.cos(th);
+      g.fillStyle = col('--accent'); g.globalAlpha = .25;
+      g.beginPath(); g.arc(x, y, 16 * dpr, 0, 7); g.fill(); g.globalAlpha = 1;
+      g.beginPath(); g.arc(x, y, 7 * dpr, 0, 7); g.fill();
+    }
+  } else {
+    g.fillStyle = col('--cool'); g.globalAlpha = .28;
+    g.beginPath(); g.arc(cx, cy, Math.max(6, R * 0.9 * strength) , Math.PI, 2 * Math.PI); g.fill(); g.globalAlpha = 1;
+  }
+}
+function drawTrend(){
+  fitCanvas(trendC);
+  const dpr = window.devicePixelRatio || 1, g = trendG, W = trendC.width, H = trendC.height;
+  g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, W, H);
+  if (hist.length < 2) return;
+  let lo = Math.min(...hist) - 3, hi = Math.max(...hist) + 3;
+  if (hi - lo < 20) { const mid = (hi + lo) / 2; lo = mid - 10; hi = mid + 10; }
+  const X = i => W * (i + (400 - hist.length)) / 399, Y = v => H - 4 * dpr - (H - 8 * dpr) * (v - lo) / (hi - lo);
+  g.strokeStyle = col('--muted'); g.globalAlpha = .5; g.setLineDash([4 * dpr, 4 * dpr]); g.lineWidth = dpr;
+  g.beginPath(); g.moveTo(0, Y(floorDb)); g.lineTo(W, Y(floorDb)); g.stroke();
+  g.setLineDash([]); g.globalAlpha = 1;
+  g.beginPath(); hist.forEach((v, i) => i ? g.lineTo(X(i), Y(v)) : g.moveTo(X(i), Y(v)));
+  g.strokeStyle = col('--accent'); g.lineWidth = 1.6 * dpr; g.stroke();
+  g.lineTo(X(hist.length - 1), H); g.lineTo(X(0), H); g.closePath();
+  g.fillStyle = col('--accent'); g.globalAlpha = .12; g.fill(); g.globalAlpha = 1;
+}
+
+/* ---------- análisis (≈20 veces por segundo) ---------- */
+function stereoDirection(){
+  anL.getFloatTimeDomainData(tL); anR.getFloatTimeDomainData(tR);
+  const n = tL.length;
+  let el = 0, er = 0, ed = 0;
+  for (let i = 0; i < n; i++) { el += tL[i]*tL[i]; er += tR[i]*tR[i]; const d = tL[i]-tR[i]; ed += d*d; }
+  const rl = Math.sqrt(el / n), rr = Math.sqrt(er / n);
+  if (rl > 5e-4) {
+    const real = rr > 1e-4 && ed / (el + er + 1e-12) > 0.002;
+    stereoScore = clamp01(stereoScore + (real ? 0.1 : -0.1));
+  }
+  if (stereoScore <= 0.5 || rl < 5e-4 || rr < 1e-5) return;
+  const ild = 20 * Math.log10((rr + 1e-9) / (rl + 1e-9));
+  let bestLag = 0, bestC = -Infinity;
+  for (let lag = -32; lag <= 32; lag++) {
+    let c = 0;
+    const s = Math.max(0, -lag), e = Math.min(n, n - lag);
+    for (let i = s; i < e; i++) c += tL[i] * tR[i + lag];
+    if (c > bestC) { bestC = c; bestLag = lag; }
+  }
+  const pItd = Math.max(-1, Math.min(1, -bestLag / lagNorm));
+  const pIld = Math.max(-1, Math.min(1, ild / 9));
+  pos = pos * 0.8 + (0.6 * pItd + 0.4 * pIld) * 0.2;
+}
+
+function tick(now){
+  const n = timeBuf.length;
+  let e = 0;
+  for (let i = 0; i < n; i++) e += timeBuf[i] * timeBuf[i];
+  const lvl = 20 * Math.log10(Math.sqrt(e / n) + 1e-9);
+  lvlS = lvlS === null ? lvl : lvlS * 0.6 + lvl * 0.4;
+  hist.push(lvlS); if (hist.length > 400) hist.shift();
+  floorHist.push(lvlS); if (floorHist.length > 800) floorHist.shift();
+  env.push(lvl); if (env.length > ENV_N) env.shift();
+  tickN++;
+  if (tickN % 10 === 0 && floorHist.length > 40) {
+    const s = floorHist.slice().sort((a, b) => a - b);
+    floorDb = s[Math.floor(s.length * 0.1)];
+  }
+
+  const f = spectrumFeatures(freqDb, fs, FFT);
+  baseDb = baseDb * 0.9 + f.med * 0.1;
+
+  const sum = f.chroma.reduce((a, b) => a + b, 0);
+  if (sum > 0) for (let i = 0; i < 12; i++) chromaS[i] = chromaS[i] * 0.96 + 0.04 * (f.chroma[i] / sum);
+  else for (let i = 0; i < 12; i++) chromaS[i] *= 0.99;
+
+  if (env.length === ENV_N && tickN % 4 === 0) speechMod = speechMod * 0.5 + speechModulation(env) * 0.5;
+  const voiceHint = (now - lastSpeechEvt) < 2500 ? 1 : 0;
+
+  const clarity = chromaClarity(f.chroma, f.chromaPeaks);
+  const key = bestKey(chromaS);
+  const keyFit = clamp01((key.r - 0.35) / 0.45) * clamp01(f.chromaPeaks / 4);
+  const sc = musicScores(f, clarity, keyFit, speechMod, voiceHint, lvlS);
+  const voiceRaw = Math.max(speechMod * 0.85, voiceHint * 0.9) * clamp01((lvlS + 85) / 15);
+  const al = 0.1;
+  S.music += (sc.music - S.music) * al;
+  S.orch  += (sc.orch  - S.orch)  * 0.05;
+  S.voice += (voiceRaw - S.voice) * 0.15;
+  S.noise = clamp01(1 - Math.max(S.music, S.voice, S.orch * 1.2)) * clamp01((lvlS + 95) / 20);
+  keyInfo = (S.music > 0.2 && keyFit > 0.3) ? key : null;
+
+  if (f.peakFreq && f.peakDb > f.med + 18) lastNote = noteName(f.peakFreq) + ' · ' + Math.round(f.peakFreq) + ' Hz';
+  else lastNote = '—';
+
+  let cand;
+  if (lvlS < -78) cand = 'silence';
+  else if (S.orch > 0.30 && S.music > 0.36) cand = 'orchestra';
+  else if (S.music > 0.30) cand = 'music';
+  else if (S.voice > 0.45) cand = 'voice';
+  else cand = 'noise';
+  if (cand === state) pendN = 0;
+  else { if (cand === pend) pendN++; else { pend = cand; pendN = 1; } if (pendN >= 14) { state = cand; pendN = 0; } }
+
+  if (stereoScore > 0.5 || trackCh >= 2) stereoDirection();
+  if (tickN % 2 === 0) updateDom();
+}
+
+const VERDICT = {
+  idle:      ['En espera', 'Pulsa el botón para activar el micrófono.'],
+  silence:   ['Silencio', 'Casi no hay sonido alrededor.'],
+  noise:     ['Estática / ruido ambiente', 'Sin tonos ni patrones claros por ahora.'],
+  voice:     ['Voz humana', 'Se detecta habla entre el ruido.'],
+  music:     ['Música', 'Tonos sostenidos y armónicos.'],
+  orchestra: ['Posible sinfonía u orquesta', 'Muchos instrumentos a la vez, de graves a agudos.']
+};
+function updateDom(){
+  const v = $('verdict');
+  v.dataset.state = state;
+  $('vLabel').textContent = VERDICT[state][0];
+  let sub = VERDICT[state][1];
+  if ((state === 'music' || state === 'orchestra') && keyInfo) sub += ' Tonalidad probable: ' + NOTES[keyInfo.pc] + (keyInfo.minor ? ' menor.' : ' mayor.');
+  $('vSub').textContent = sub;
+  $('sLevel').textContent = lvlS.toFixed(0) + ' dB';
+  $('sFloor').textContent = floorDb.toFixed(0) + ' dB';
+  $('sSnr').textContent = '+' + Math.max(0, lvlS - floorDb).toFixed(0) + ' dB';
+  $('sNote').textContent = lastNote;
+  for (const [k] of BARS) {
+    const el = $('bar-' + k), val = clamp01(k === 'orch' ? S.orch * 1.6 : k === 'music' ? S.music * 1.8 : S[k]);
+    el.style.setProperty('--v', val.toFixed(3));
+    el.querySelector('b').textContent = Math.round(val * 100) + '%';
+  }
+  let sum = 0, mx = 0, mi = 0;
+  for (let i = 0; i < 12; i++) { sum += chromaS[i]; if (chromaS[i] > mx) { mx = chromaS[i]; mi = i; } }
+  for (let i = 0; i < 12; i++) {
+    const c = $('ch' + i);
+    c.style.setProperty('--v', sum > 0.01 ? (chromaS[i] / (mx || 1)).toFixed(3) : 0);
+    c.classList.toggle('top', sum > 0.01 && i === mi && S.music > 0.15);
+  }
+  $('keyline').innerHTML = keyInfo ? 'Tonalidad probable: <b>' + NOTES[keyInfo.pc] + (keyInfo.minor ? ' menor' : ' mayor') + '</b>' : 'Tonalidad probable: —';
+
+  const snr = lvlS - floorDb;
+  if (stereoScore > 0.5) {
+    if (snr < 6) { $('locText').textContent = 'Sin fuente clara'; $('locNote').textContent = 'Acércate o espera a que el sonido se distinga del ruido.'; }
+    else {
+      const side = pos < -0.2 ? 'A tu izquierda' : pos > 0.2 ? 'A tu derecha' : 'Al frente (o detrás)';
+      $('locText').textContent = side;
+      $('locNote').textContent = 'Un micrófono estéreo no distingue frente de atrás. Gira el dispositivo para confirmar.';
+    }
+  } else {
+    let trend = 'Sin cambio';
+    if (hist.length >= 80) {
+      const a = hist.slice(-40).reduce((x, y) => x + y, 0) / 40, b = hist.slice(-80, -40).reduce((x, y) => x + y, 0) / 40;
+      trend = a - b > 1.5 ? 'Más cerca ↑' : a - b < -1.5 ? 'Más lejos ↓' : 'Sin cambio';
+    }
+    $('locText').textContent = snr < 6 ? 'Sin fuente clara' : trend;
+    $('locNote').textContent = 'Tu micrófono es mono, así que no da dirección. Camina o gira el dispositivo y observa si el nivel sube: caliente es más cerca.';
+  }
+}
+
+/* ---------- ciclo principal ---------- */
+function frame(t){
+  if (!running) return;
+  rafId = requestAnimationFrame(frame);
+  const dt = Math.min(0.1, (t - (lastFrame || t)) / 1000); lastFrame = t;
+  analyser.getFloatFrequencyData(freqDb);
+  analyser.getFloatTimeDomainData(timeBuf);
+  for (let i = 0; i < freqDb.length; i++) if (!(freqDb[i] > -140)) freqDb[i] = -140;
+  resizeSpec();
+  acc += SPEED * (window.devicePixelRatio || 1) * dt;
+  const dx = Math.floor(acc);
+  if (dx >= 1) { acc -= dx; drawColumn(Math.min(dx, specC.width)); }
+  if (t - lastTick >= TICK_MS) { lastTick = t; tick(t); }
+  drawRadar();
+  if (tickN % 2 === 0) drawTrend();
+}
+
+/* ---------- micrófono ---------- */
+async function start(){
+  showMsg('');
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showMsg('Este navegador no permite usar el micrófono desde aquí. Abre el archivo directamente en Chrome o Edge, no en una vista previa.');
+    return;
+  }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: { ideal: 2 }, echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+  } catch (err) {
+    showMsg(err && err.name === 'NotAllowedError'
+      ? 'No se pudo usar el micrófono porque el permiso está bloqueado. Permítelo en la barra de direcciones y vuelve a intentar.'
+      : 'No se encontró un micrófono disponible.');
+    return;
+  }
+  const AC = window.AudioContext || window.webkitAudioContext;
+  ctx = new AC();
+  if (ctx.state === 'suspended') await ctx.resume();
+  fs = ctx.sampleRate;
+  const trk = stream.getAudioTracks()[0];
+  trackCh = (trk.getSettings && trk.getSettings().channelCount) || 1;
+  const src = ctx.createMediaStreamSource(stream);
+  analyser = ctx.createAnalyser();
+  analyser.fftSize = FFT; analyser.smoothingTimeConstant = 0.55;
+  analyser.minDecibels = -140; analyser.maxDecibels = 0;
+  src.connect(analyser);
+  const split = ctx.createChannelSplitter(2);
+  anL = ctx.createAnalyser(); anR = ctx.createAnalyser();
+  anL.fftSize = anR.fftSize = 2048;
+  src.connect(split); split.connect(anL, 0); split.connect(anR, 1);
+  freqDb = new Float32Array(analyser.frequencyBinCount);
+  timeBuf = new Float32Array(analyser.fftSize);
+  tL = new Float32Array(anL.fftSize); tR = new Float32Array(anR.fftSize);
+  lagNorm = Math.max(8, fs * 0.0004);
+  hist.length = 0; floorHist.length = 0; env.length = 0;
+  lvlS = null; baseDb = -100; floorDb = -90; stereoScore = 0; pos = 0; tickN = 0; acc = 0; lastFrame = 0; lastTick = 0;
+  S.noise = S.voice = S.music = S.orch = 0; state = 'noise'; speechMod = 0; chromaS = new Float32Array(12);
+  specC.width = 0; buildTicks();
+  running = true;
+  $('idle').hidden = true;
+  const b = $('toggle'); b.textContent = 'Detener'; b.classList.add('on');
+  rafId = requestAnimationFrame(frame);
+  if ($('tx').checked) startRecognition();
+}
+function stop(){
+  running = false;
+  cancelAnimationFrame(rafId);
+  stopRecognition();
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  if (ctx) ctx.close();
+  stream = ctx = null;
+  state = 'idle';
+  $('verdict').dataset.state = 'idle';
+  $('vLabel').textContent = VERDICT.idle[0]; $('vSub').textContent = 'Detenido. Pulsa para volver a escuchar.';
+  const b = $('toggle'); b.textContent = 'Empezar a escuchar'; b.classList.remove('on');
+  $('interim').textContent = '';
+  drawRadar();
+}
+
+/* ---------- transcripción ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, wantRec = false, fatal = false;
+const log = [];
+function startRecognition(){
+  if (!SR) { showMsg('Este navegador no incluye reconocimiento de voz. Usa Chrome o Edge para ver las palabras; el resto del radar funciona igual.', true); return; }
+  if (rec) return;
+  wantRec = true; fatal = false;
+  rec = new SR();
+  rec.lang = $('lang').value; rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 1;
+  rec.onresult = ev => {
+    lastSpeechEvt = performance.now();
+    let interim = '';
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const r = ev.results[i], alt = r[0];
+      if (r.isFinal) addUtterance(alt.transcript.trim(), alt.confidence);
+      else interim += alt.transcript;
+    }
+    $('interim').textContent = interim;
+  };
+  rec.onerror = ev => {
+    if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+      fatal = true; showMsg('El navegador no dejó usar el reconocimiento de voz. Revisa el permiso del micrófono. El radar sigue funcionando.', true);
+    } else if (ev.error === 'network') {
+      showMsg('La transcripción necesita internet y no pudo conectarse. El radar sigue funcionando.', true);
+    } else if (ev.error === 'audio-capture') {
+      showMsg('Si el audio se corta al activar la transcripción, desmárcala: algunos teléfonos no comparten el micrófono.', true);
+    }
+  };
+  rec.onend = () => {
+    rec = null;
+    if (running && wantRec && !fatal) setTimeout(() => { if (running && wantRec) startRecognition(); }, 350);
+  };
+  try { rec.start(); } catch (e) { rec = null; }
+}
+function stopRecognition(){
+  wantRec = false;
+  if (rec) { try { rec.onend = null; rec.stop(); } catch (e) {} rec = null; }
+}
+function addUtterance(text, conf){
+  if (!text) return;
+  const snr = lvlS === null ? 0 : Math.max(0, lvlS - floorDb);
+  const c = conf > 0 ? conf : 1;
+  const when = new Date();
+  const item = { text, conf: c, snr, when, label: VERDICT[state] ? VERDICT[state][0] : '' };
+  log.push(item);
+  const feed = $('feed');
+  if (feed.querySelector('.empty')) feed.innerHTML = '';
+  const li = document.createElement('li');
+  const tm = document.createElement('time'); tm.textContent = when.toLocaleTimeString('es-MX');
+  const p = document.createElement('p');
+  text.split(/\s+/).forEach((w, i) => {
+    const s = document.createElement('span'); s.className = 'w'; s.style.setProperty('--c', c.toFixed(2));
+    s.textContent = (i ? ' ' : '') + w; p.appendChild(s);
+  });
+  const meta = document.createElement('span'); meta.className = 'meta';
+  meta.textContent = '+' + snr.toFixed(0) + ' dB sobre el ruido · ' + item.label + (conf > 0 ? ' · seguridad ' + Math.round(conf * 100) + '%' : '');
+  li.append(tm, p, meta);
+  feed.prepend(li);
+}
+
+/* ---------- eventos ---------- */
+$('toggle').addEventListener('click', () => running ? stop() : start());
+$('gain').addEventListener('input', e => { gainDb = +e.target.value; });
+$('lang').addEventListener('change', () => { if (running && wantRec) { stopRecognition(); wantRec = true; setTimeout(startRecognition, 300); } });
+$('tx').addEventListener('change', e => {
+  if (!running) return;
+  if (e.target.checked) startRecognition(); else { stopRecognition(); $('interim').textContent = ''; }
+});
+$('clear').addEventListener('click', () => {
+  log.length = 0;
+  $('feed').innerHTML = '<li class="empty">Las palabras aparecerán aquí, con su hora y qué tanto sobresalían del ruido. Las menos seguras se ven más tenues.</li>';
+});
+$('copy').addEventListener('click', () => {
+  const txt = log.map(l => l.when.toLocaleTimeString('es-MX') + '  ' + l.text).join('\n');
+  const b = $('copy');
+  const done = ok => { b.textContent = ok ? 'Copiado' : 'No se pudo'; setTimeout(() => { b.textContent = 'Copiar'; }, 1400); };
+  if (!txt) return done(false);
+  if (navigator.clipboard) navigator.clipboard.writeText(txt).then(() => done(true), () => done(false)); else done(false);
+});
+window.addEventListener('resize', () => { if (!running) { buildTicks(); drawRadar(); drawTrend(); } });
+
+if (!SR) showMsg('Este navegador no incluye reconocimiento de voz. Usa Chrome o Edge para ver las palabras; el radar funciona igual.', true);
+buildTicks(); drawRadar(); drawTrend();
+// Exposición mínima para pruebas automáticas
+if (typeof window !== 'undefined') window.__radar = { spectrumFeatures, musicScores, chromaClarity, bestKey, speechModulation };
+})();
+</script>
+</body>
+</html>
