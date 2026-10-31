@@ -170,19 +170,19 @@ canvas.fit{display:block;width:100%}
     </section>
 
     <section class="panel">
-      <h2>Qué se oye decir</h2>
+      <h2>Palabras reconocidas</h2>
       <div class="tools">
-        <label for="tx"><input id="tx" type="checkbox" checked> Transcribir</label>
+        <label for="tx"><input id="tx" type="checkbox" checked> Reconocer voz</label>
         <span class="spacer"></span>
         <button id="copy" type="button">Copiar</button>
         <button id="clear" type="button">Limpiar</button>
       </div>
       <p id="interim" aria-live="polite"></p>
-      <ol id="feed"><li class="empty">Las palabras aparecerán aquí, con su hora y qué tanto sobresalían del ruido. Las menos seguras se ven más tenues.</li></ol>
+      <ol id="feed"><li class="empty">Las frases reconocidas aparecerán aquí en orden, de la primera a la última. El reconocimiento detecta voz clara; no puede recuperar letras tapadas o inaudibles dentro de una sinfonía.</li></ol>
     </section>
   </div>
 
-  <p class="foot">Abre este archivo directamente en Chrome o Edge (en Safari la transcripción puede variar). La transcripción usa el servicio de voz del navegador, así que necesita internet. El audio del micrófono se analiza solo en tu dispositivo.</p>
+  <p class="foot">La transcripción usa el reconocimiento de voz de Chrome o Edge y necesita internet. Está pensado para voz audible; no identifica de forma fiable letras cantadas ni palabras ocultas bajo la música. Las frases reconocidas se agregan al final, en orden. El análisis del radar se procesa en tu dispositivo.</p>
 </div>
 
 <script>
@@ -717,7 +717,8 @@ function addUtterance(text, conf){
   const meta = document.createElement('span'); meta.className = 'meta';
   meta.textContent = '+' + snr.toFixed(0) + ' dB sobre el ruido · ' + item.label + (conf > 0 ? ' · seguridad ' + Math.round(conf * 100) + '%' : '');
   li.append(tm, p, meta);
-  feed.prepend(li);
+  feed.append(li);
+  feed.scrollTop = feed.scrollHeight;
 }
 
 /* ---------- eventos ---------- */
@@ -730,7 +731,7 @@ $('tx').addEventListener('change', e => {
 });
 $('clear').addEventListener('click', () => {
   log.length = 0;
-  $('feed').innerHTML = '<li class="empty">Las palabras aparecerán aquí, con su hora y qué tanto sobresalían del ruido. Las menos seguras se ven más tenues.</li>';
+  $('feed').innerHTML = '<li class="empty">Las frases reconocidas aparecerán aquí en orden, de la primera a la última. El reconocimiento detecta voz clara; no puede recuperar letras tapadas o inaudibles dentro de una sinfonía.</li>';
 });
 $('copy').addEventListener('click', () => {
   const txt = log.map(l => l.when.toLocaleTimeString('es-MX') + '  ' + l.text).join('\n');
